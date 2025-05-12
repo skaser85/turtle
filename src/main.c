@@ -11,11 +11,18 @@
 #define NOB_IMPLEMENTATION
 #include "../nob.h"
 
+#if 0
 #define SW 1920
 #define SH 1080
 #define TSCALE 0.02
-
 #define INPUT_FONT_SIZE 100
+#else
+#define SW 1600
+#define SH 960
+#define TSCALE 0.1
+#define INPUT_FONT_SIZE 50 
+#endif
+
 
 typedef struct {
   Vector2 start;
@@ -252,8 +259,9 @@ bool UpdateTurtle(Turtle* t, TurtleCmd* cmd) {
 int main(void) {
   InitWindow(SW, SH, "turtle");
 
-  Font space = LoadFont("./assets/fonts/Space_Mono/SpaceMono-Regular.ttf");
-
+  Font space = LoadFontEx("./assets/fonts/Space_Mono/SpaceMono-Regular.ttf", INPUT_FONT_SIZE, NULL, 0);
+  SetTextureFilter(space.texture, TEXTURE_FILTER_BILINEAR);
+  
   TurtleCmds cmds = {0};
   InsertCmd(&cmds, "Forward", "FD", true, CMD_FD, CAT_INT);
   InsertCmd(&cmds, "Back", "BK", true, CMD_BK, CAT_INT);
@@ -369,7 +377,7 @@ int main(void) {
     Nob_String_View sv = nob_sb_to_sv(inputText);
     DrawTextEx(space, nob_temp_sv_to_cstr(sv), inputBoxPos, INPUT_FONT_SIZE, 0, WHITE);
 
-    DrawLine(5, 140, 500, 140, WHITE);
+    DrawLine(5, INPUT_FONT_SIZE*1.3, 500, INPUT_FONT_SIZE*1.3, WHITE);
 
     size_t y = inputBoxPos.y + INPUT_FONT_SIZE*1.5;
     for (int i = commands.count-1; i >= 0; i--) {
