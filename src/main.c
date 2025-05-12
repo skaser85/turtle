@@ -18,6 +18,19 @@
 #define INPUT_FONT_SIZE 100
 
 typedef struct {
+  Vector2 start;
+  Vector2 end;
+  float thickness;
+  Color color
+} TLine;
+
+typedef struct {
+  TLine* items;
+  size_t capacity;
+  size_t count;
+} TLines;
+
+typedef struct {
   bool down;
   Color color;
   int width;
@@ -28,6 +41,7 @@ typedef struct {
   float rotation;
   float size;
   Pen pen;
+  TLines lines;
 } Turtle;
 
 typedef enum {
@@ -76,40 +90,6 @@ typedef struct {
   size_t count;
   size_t capacity;
 } Commands;
-
-typedef struct {
-  char *key;
-  Color value;
-} ColorMapItem;
-
-void FillColorMap(ColorMapItem **map) {
-  shput(*map, "LIGHTGRAY", LIGHTGRAY);  
-  shput(*map, "GRAY", GRAY);
-  shput(*map, "DARKGRAY", DARKGRAY);
-  shput(*map, "YELLOW", YELLOW); 
-  shput(*map, "GOLD", GOLD);
-  shput(*map, "ORANGE", ORANGE);
-  shput(*map, "PINK", PINK);
-  shput(*map, "RED", RED);
-  shput(*map, "MAROON", MAROON);
-  shput(*map, "GREEN", GREEN);
-  shput(*map, "LIME", LIME);
-  shput(*map, "DARKGREEN", DARKGREEN);
-  shput(*map, "SKYBLUE", SKYBLUE);
-  shput(*map, "BLUE", BLUE);
-  shput(*map, "DARKBLUE", DARKBLUE);
-  shput(*map, "PURPLE", PURPLE);
-  shput(*map, "VIOLET", VIOLET);
-  shput(*map, "DARKPURPLE", DARKPURPLE);
-  shput(*map, "BEIGE", BEIGE);
-  shput(*map, "BROWN", BROWN);
-  shput(*map, "DARKBROWN", DARKBROWN);
-  shput(*map, "WHITE", WHITE);
-  shput(*map, "BLACK", BLACK);
-  shput(*map, "BLANK", BLANK);
-  shput(*map, "MAGENTA", MAGENTA);
-  shput(*map, "RAYWHITE", RAYWHITE);
-}
 
 typedef struct {
   const char* name;
@@ -252,10 +232,19 @@ bool UpdateTurtle(Turtle* t, TurtleCmd* cmd) {
     case CMD_SETPC: t->pen.color = color; break;
     case CMD_PD: t->pen.down = true; break;
     case CMD_PU: t->pen.down = false; break;
-    case CMD_FD: t->position = Vector2MoveTowards(t->position, GetEnd(t->position, t->rotation, t->size), amt); break;
-    case CMD_BK: t->position = Vector2MoveTowards(t->position, GetEnd(t->position, t->rotation, -t->size), amt); break;
-    case CMD_LT: t->rotation -= amt; break;
-    case CMD_RT: t->rotation += amt; break;
+    case CMD_FD:
+    case CMD_BK: {
+      int size = cmd->cmd == CMD_FD ? amt : -amt; 
+      Vector2 end = GetEnd(t->position, t->rotation, size);
+      if (t->pen.down) {
+        TLine line = { .start = t->position, .end = end, .thickness = 5, .color = t->pen.color };
+        nob_da_append(&t->lines, line);
+      }
+      t->position = end;
+      break;
+    }
+    case CMD_LT: t->rotation -= d2r(amt); break;
+    case CMD_RT: t->rotation += d2r(amt); break;
   }
   return true;
 }
@@ -277,6 +266,8 @@ int main(void) {
   InsertCmd(&cmds, "SetPenColor", "SETPC", true, CMD_SETPC, CAT_COLOR);
   InsertCmd(&cmds, "SetBackground", "SETBG", true, CMD_SETBG, CAT_COLOR);
 
+  TLines lines = {0};
+
   Pen tpen = { 
     .down = false,
     .color = LIME,
@@ -287,7 +278,8 @@ int main(void) {
     .position = CLITERAL(Vector2) { .x = SW / 2, .y = SH / 2 },
     .rotation = 0,//d2r(180.0f),
     .size = 30,
-    .pen = tpen
+    .pen = tpen,
+    .lines = lines
   };
 
   Commands commands = {0};
@@ -365,6 +357,11 @@ int main(void) {
         nob_da_append(&commands, cb);
       }
       tc = NULL;
+    }
+
+    for (size_t i = 0; i < turtle.lines.count; ++i) {
+      TLine line = turtle.lines.items[i];
+      DrawLineEx(line.start, line.end, line.thickness, line.color);
     }
 
     DrawTurtle(turtle);
