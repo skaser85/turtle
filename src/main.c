@@ -23,12 +23,14 @@
 #define INPUT_FONT_SIZE 50 
 #endif
 
+#define MAX_INPUT_CHARS_COUNT 50
+
 
 typedef struct {
   Vector2 start;
   Vector2 end;
   float thickness;
-  Color color
+  Color color;
 } TLine;
 
 typedef struct {
@@ -62,6 +64,7 @@ typedef enum {
   CMD_PU,
   CMD_SETPC,
   CMD_SETBG,
+  CMD_RP,
   CMD_COUNT
 } Cmd;
 
@@ -69,6 +72,7 @@ typedef enum {
   CAT_NONE,
   CAT_INT,
   CAT_COLOR,
+  CAT_TEXT,
   CAT_COUNT
 } CmdArgType;
 
@@ -76,7 +80,7 @@ typedef struct {
   const char* fullName;
   const char* shortName;
   Cmd cmd;
-  char* arg;
+  const char* arg;
   bool argRequired;
   CmdArgType argType;
 } TurtleCmd;
@@ -157,7 +161,7 @@ Colors GetColors() {
   return colors;
 }
 
-Color LookupColor(char* value) {
+Color LookupColor(const char* value) {
   Colors colors = GetColors();
   value = ucase(value);
   for (size_t i = 0; i < colors.count; ++i) {
@@ -169,7 +173,7 @@ Color LookupColor(char* value) {
 
 CmdBuff CreateCmdBuff(size_t count, Nob_String_View sv, const char* errorMsg) {
   char countStr[3];
-  snprintf(countStr, sizeof(countStr), "%02x", count);
+  snprintf(countStr, sizeof(countStr), "%02lx", count);
   Nob_String_Builder nsb = {0};
   nob_sb_appendf(&nsb, "%s: %s", countStr, ucase(nob_temp_sv_to_cstr(sv)));
   Color color = WHITE;
@@ -195,11 +199,17 @@ Vector2 GetEnd(Vector2 v, float r, float len) {
   return end;
 }
 
-void DrawTurtle(Turtle t) {
+void DrawTurtle(Turtle t, Font font) {
   DrawCircleV(t.position, t.size, t.pen.color);
   Vector2 end = GetEnd(t.position, t.rotation, t.size/2);
   DrawCircleV(end, t.size/2, ORANGE);
   DrawCircleV(GetEnd(t.position, t.rotation, t.size*0.8), t.size/6, BLACK);
+  DrawCircleV(t.position, t.size/8, BLACK);
+  const char* text = t.pen.down ? "PD" : "PU";
+  int fontSize = 12;
+  Vector2 m = MeasureTextEx(font, text, fontSize, 1);
+  Vector2 c = { .x = t.position.x - (m.x/2), .y = t.position.y - (fontSize/2) };
+  DrawTextEx(font, text, c, fontSize, 1, WHITE);
 }
 
 void InsertCmd(TurtleCmds *cmds, const char* fullName, const char* shortName, bool argRequired, Cmd cmd, CmdArgType catType) {
@@ -219,9 +229,10 @@ TurtleCmd* GetCmd(TurtleCmds cmds, Nob_String_View cmdText) {
   return NULL;
 }
 
-bool UpdateTurtle(Turtle* t, TurtleCmd* cmd) {
+bool ValidateArg(TurtleCmd* cmd) {
   float amt = 0;
   Color color = WHITE;
+  Nob_String_Builder sb = {0};
   if (cmd->argType == CAT_INT) {
     amt = atof(cmd->arg);
     if (amt == 0.0f)
@@ -230,6 +241,30 @@ bool UpdateTurtle(Turtle* t, TurtleCmd* cmd) {
     color = LookupColor(cmd->arg);
     if (color.a == 0)
       return false;
+  } else if (cmd->argType == CAT_TEXT) {
+    if (!nob_sb_appendf(&sb, "%s", cmd->arg)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool UpdateTurtle(Turtle* t, TurtleCmd* cmd, TurtleCmds commands) {
+  float amt = 0;
+  Color color = WHITE;
+  Nob_String_Builder sb = {0};
+  if (cmd->argType == CAT_INT) {
+    amt = atof(cmd->arg);
+    if (amt == 0.0f)
+      return false;
+  } else if (cmd->argType == CAT_COLOR) {
+    color = LookupColor(cmd->arg);
+    if (color.a == 0)
+      return false;
+  } else if (cmd->argType == CAT_TEXT) {
+    if (!nob_sb_appendf(&sb, "%s", cmd->arg)) {
+      return false;
+    }
   }
 
   switch (cmd->cmd) {
@@ -252,6 +287,37 @@ bool UpdateTurtle(Turtle* t, TurtleCmd* cmd) {
     }
     case CMD_LT: t->rotation -= d2r(amt); break;
     case CMD_RT: t->rotation += d2r(amt); break;
+    case CMD_RP: {
+      Nob_String_View sv = nob_sv_from_cstr(cmd->arg);
+      Nob_String_View rpt = nob_sv_chop_by_delim(&sv, ' '); 
+      int rptCount = atoi(rpt.data);
+      if (rptCount == 0) {
+        nob_log(NOB_ERROR, "Invalid rptCount: "SV_Fmt, SV_Arg(rpt));
+        return false;
+      }
+      nob_log(NOB_INFO, "rptCount: %d", rptCount);
+      Nob_String_View next = nob_sv_chop_left(&sv, 1);
+      if (!nob_sv_eq(next, nob_sv_from_cstr("["))) {
+        nob_log(NOB_ERROR, "Invalid repeat start: "SV_Fmt, SV_Arg(next));
+        return false;
+      }
+      next = nob_sv_chop_by_delim(&sv, ' ');
+      TurtleCmd* tc = GetCmd(commands, next);
+      if (!tc) {
+        nob_log(NOB_ERROR, "Invalid cmd: "SV_Fmt, SV_Arg(next));
+        return false;
+      }
+      next = nob_sv_chop_by_delim(&sv, ' ');
+      tc->arg = nob_temp_sv_to_cstr(next);
+      if (tc->argRequired) {
+        if (!ValidateArg(tc)) {
+          nob_log(NOB_ERROR, "Invalid arg: "SV_Fmt, SV_Arg(next));
+          return false;
+        }
+      }
+      nob_log(NOB_INFO, SV_Fmt, SV_Arg(sv));
+    } break;
+    case CMD_COUNT: break;
   }
   return true;
 }
@@ -259,8 +325,11 @@ bool UpdateTurtle(Turtle* t, TurtleCmd* cmd) {
 int main(void) {
   InitWindow(SW, SH, "turtle");
 
-  Font space = LoadFontEx("./assets/fonts/Space_Mono/SpaceMono-Regular.ttf", INPUT_FONT_SIZE, NULL, 0);
-  SetTextureFilter(space.texture, TEXTURE_FILTER_BILINEAR);
+  Font space12 = LoadFontEx("./assets/fonts/spaceInputFontSize_Mono/spaceInputFontSizeMono-Regular.ttf", 12, NULL, 0);
+  SetTextureFilter(space12.texture, TEXTURE_FILTER_BILINEAR);
+
+  Font spaceInputFontSize = LoadFontEx("./assets/fonts/spaceInputFontSize_Mono/spaceInputFontSizeMono-Regular.ttf", INPUT_FONT_SIZE, NULL, 0);
+  SetTextureFilter(spaceInputFontSize.texture, TEXTURE_FILTER_BILINEAR);
   
   TurtleCmds cmds = {0};
   InsertCmd(&cmds, "Forward", "FD", true, CMD_FD, CAT_INT);
@@ -273,6 +342,7 @@ int main(void) {
   InsertCmd(&cmds, "PenUp", "PU", false, CMD_PU, CAT_NONE);
   InsertCmd(&cmds, "SetPenColor", "SETPC", true, CMD_SETPC, CAT_COLOR);
   InsertCmd(&cmds, "SetBackground", "SETBG", true, CMD_SETBG, CAT_COLOR);
+  InsertCmd(&cmds, "Repeat", "RP", true, CMD_RP, CAT_TEXT);
 
   TLines lines = {0};
 
@@ -284,7 +354,7 @@ int main(void) {
 
   Turtle turtle = {
     .position = CLITERAL(Vector2) { .x = SW / 2, .y = SH / 2 },
-    .rotation = 0,//d2r(180.0f),
+    .rotation = 0,
     .size = 30,
     .pen = tpen,
     .lines = lines
@@ -315,7 +385,7 @@ int main(void) {
       int key = GetCharPressed();
 
       // Check if more characters have been pressed on the same frame
-      while (key > 0)
+      while (key > 0 && inputText.count < MAX_INPUT_CHARS_COUNT)
       {
           if ((key >= 32) && (key <= 125)) 
               nob_da_append(&inputText, (char)key);
@@ -360,7 +430,7 @@ int main(void) {
     }
 
     if (tc) {
-      if (!UpdateTurtle(&turtle, tc)) {
+      if (!UpdateTurtle(&turtle, tc, cmds)) {
         CmdBuff cb = CreateCmdBuff(commandsCounter-1, nob_sv_from_cstr(tc->arg), "invalid arg");
         nob_da_append(&commands, cb);
       }
@@ -372,10 +442,10 @@ int main(void) {
       DrawLineEx(line.start, line.end, line.thickness, line.color);
     }
 
-    DrawTurtle(turtle);
+    DrawTurtle(turtle, space12);
 
     Nob_String_View sv = nob_sb_to_sv(inputText);
-    DrawTextEx(space, nob_temp_sv_to_cstr(sv), inputBoxPos, INPUT_FONT_SIZE, 0, WHITE);
+    DrawTextEx(spaceInputFontSize, nob_temp_sv_to_cstr(sv), inputBoxPos, INPUT_FONT_SIZE, 1, WHITE);
 
     DrawLine(5, INPUT_FONT_SIZE*1.3, 500, INPUT_FONT_SIZE*1.3, WHITE);
 
@@ -383,7 +453,7 @@ int main(void) {
     for (int i = commands.count-1; i >= 0; i--) {
       CmdBuff cb = commands.items[i];
       Vector2 pos = { .x = 10, .y = y };
-      DrawTextEx(space, nob_temp_sv_to_cstr(cb.text), pos, INPUT_FONT_SIZE*0.6, 0, cb.color);
+      DrawTextEx(spaceInputFontSize, nob_temp_sv_to_cstr(cb.text), pos, INPUT_FONT_SIZE*0.6, 1, cb.color);
       y += INPUT_FONT_SIZE*0.6;
       if (y >= SH) break;
     }
@@ -391,7 +461,8 @@ int main(void) {
     EndDrawing();
   }
 
-  UnloadFont(space);
+  UnloadFont(space12);
+  UnloadFont(spaceInputFontSize);
   CloseWindow();
 }
 
