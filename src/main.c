@@ -11,7 +11,7 @@
 #define NOB_IMPLEMENTATION
 #include "../nob.h"
 
-#if 0
+#if 1
 #define SW 1920
 #define SH 1080
 #define TSCALE 0.02
@@ -301,21 +301,39 @@ bool UpdateTurtle(Turtle* t, TurtleCmd* cmd, TurtleCmds commands) {
         nob_log(NOB_ERROR, "Invalid repeat start: "SV_Fmt, SV_Arg(next));
         return false;
       }
+      TurtleCmds cmds = {0};
       next = nob_sv_chop_by_delim(&sv, ' ');
       TurtleCmd* tc = GetCmd(commands, next);
-      if (!tc) {
-        nob_log(NOB_ERROR, "Invalid cmd: "SV_Fmt, SV_Arg(next));
-        return false;
-      }
-      next = nob_sv_chop_by_delim(&sv, ' ');
-      tc->arg = nob_temp_sv_to_cstr(next);
-      if (tc->argRequired) {
-        if (!ValidateArg(tc)) {
-          nob_log(NOB_ERROR, "Invalid arg: "SV_Fmt, SV_Arg(next));
+      while (tc) {
+        if (!tc) {
+          nob_log(NOB_ERROR, "Invalid cmd: "SV_Fmt, SV_Arg(next));
           return false;
         }
+        if (tc->argRequired) {
+          next = nob_sv_chop_by_delim(&sv, ' ');
+          tc->arg = nob_temp_sv_to_cstr(next);
+          if (!ValidateArg(tc)) {
+            nob_log(NOB_ERROR, "Invalid arg: "SV_Fmt, SV_Arg(next));
+            return false;
+          }
+        }
+        nob_da_append(&cmds, *tc);
+        next = nob_sv_chop_by_delim(&sv, ' ');
+        if (nob_sv_eq(next, nob_sv_from_cstr("]"))) {
+          nob_log(NOB_INFO, "end of the rp!");
+          return true;
+        }
+        tc = GetCmd(commands, next);
+        nob_log(NOB_INFO, SV_Fmt, SV_Arg(sv));
       }
-      nob_log(NOB_INFO, SV_Fmt, SV_Arg(sv));
+      for (int i = 0; i < rptCount; ++i) {
+        for (size_t c = 0; c < cmds.count; ++c) {
+          if (!UpdateTurtle(t, &cmds.items[i], commands)) {
+            return false;
+          }
+        }
+      }
+      return true;
     } break;
     case CMD_COUNT: break;
   }
@@ -412,7 +430,7 @@ int main(void) {
               nob_log(NOB_INFO, SV_Fmt, SV_Arg(text));
               CmdBuff cb = CreateCmdBuff(commandsCounter++, nob_sb_to_sv(inputText), "");
               nob_da_append(&commands, cb);
-              tc->arg = nob_temp_sv_to_cstr(text);
+              tc->arg = text.data;
             }
           } else {
             nob_log(NOB_INFO, SV_Fmt, SV_Arg(leftCmd));
@@ -445,7 +463,8 @@ int main(void) {
     DrawTurtle(turtle, space12);
 
     Nob_String_View sv = nob_sb_to_sv(inputText);
-    DrawTextEx(spaceInputFontSize, nob_temp_sv_to_cstr(sv), inputBoxPos, INPUT_FONT_SIZE, 1, WHITE);
+    const char* _text = (char*)nob_temp_sv_to_cstr(sv);
+    DrawTextEx(spaceInputFontSize, _text, inputBoxPos, INPUT_FONT_SIZE, 1, WHITE);
 
     DrawLine(5, INPUT_FONT_SIZE*1.3, 500, INPUT_FONT_SIZE*1.3, WHITE);
 
@@ -453,12 +472,15 @@ int main(void) {
     for (int i = commands.count-1; i >= 0; i--) {
       CmdBuff cb = commands.items[i];
       Vector2 pos = { .x = 10, .y = y };
-      DrawTextEx(spaceInputFontSize, nob_temp_sv_to_cstr(cb.text), pos, INPUT_FONT_SIZE*0.6, 1, cb.color);
+      char* _text = (char*)nob_temp_sv_to_cstr(cb.text);
+      DrawTextEx(spaceInputFontSize, _text, pos, INPUT_FONT_SIZE*0.6, 1, cb.color);
       y += INPUT_FONT_SIZE*0.6;
       if (y >= SH) break;
     }
 
     EndDrawing();
+
+    nob_temp_reset();
   }
 
   UnloadFont(space12);
