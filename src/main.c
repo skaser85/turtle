@@ -11,7 +11,7 @@
 #define NOB_IMPLEMENTATION
 #include "../nob.h"
 
-#if 1
+#if 0
 #define SW 1920
 #define SH 1080
 #define TSCALE 0.02
@@ -94,13 +94,14 @@ typedef struct {
 typedef struct {
   Nob_String_View text;
   Color color;
-} CmdBuff;
+} CmdHistoryEntry;
 
 typedef struct {
-  CmdBuff* items;
+  CmdHistoryEntry* items;
   size_t count;
   size_t capacity;
-} Commands;
+  size_t counter;
+} CmdHistory;
 
 typedef struct {
   const char* name;
@@ -171,7 +172,7 @@ Color LookupColor(const char* value) {
   return ColorAlpha(WHITE, 0);
 }
 
-CmdBuff CreateCmdBuff(size_t count, Nob_String_View sv, const char* errorMsg) {
+CmdHistoryEntry CreateCmdHistoryEntry(size_t count, Nob_String_View sv, const char* errorMsg) {
   char countStr[3];
   snprintf(countStr, sizeof(countStr), "%02lx", count);
   Nob_String_Builder nsb = {0};
@@ -183,8 +184,8 @@ CmdBuff CreateCmdBuff(size_t count, Nob_String_View sv, const char* errorMsg) {
     nob_sb_appendf(&nsb, ": %s", errorMsg);
   }
   Nob_String_View nsv = nob_sb_to_sv(nsb);
-  CmdBuff cb = { nsv, color };
-  return cb;
+  CmdHistoryEntry ch = { nsv, color };
+  return ch;
 }
 
 float d2r(float degrees) {
@@ -340,6 +341,38 @@ bool UpdateTurtle(Turtle* t, TurtleCmd* cmd, TurtleCmds commands) {
   return true;
 }
 
+TurtleCmd* ParseCommandText(Nob_String_View cmdText, TurtleCmds commands, CmdHistory* history) {
+  Nob_String_View leftCmd = nob_sv_chop_by_delim(&cmdText, ' ');
+  TurtleCmd* tc = GetCmd(commands, leftCmd);
+  if (tc) {
+    if (tc->argRequired) {
+      if (cmdText.count == 0) {
+        nob_log(NOB_ERROR, "No argument provided: "SV_Fmt"???", SV_Arg(leftCmd));
+        CmdHistoryEntry ch = CreateCmdHistoryEntry(history->counter++, cmdText, "no arg");
+        nob_da_append(history, ch);
+        return NULL;
+      } else {
+        nob_log(NOB_INFO, SV_Fmt, SV_Arg(cmdText));
+        CmdHistoryEntry ch = CreateCmdHistoryEntry(history->counter++, cmdText, "");
+        nob_da_append(history, ch);
+        tc->arg = cmdText.data;
+        return tc;
+      }
+    } else {
+      nob_log(NOB_INFO, SV_Fmt, SV_Arg(leftCmd));
+      tc->arg = NULL;
+      CmdHistoryEntry ch = CreateCmdHistoryEntry(history->counter++, cmdText, "");
+      nob_da_append(history, ch);
+      return tc;
+    }
+  } else {
+    nob_log(NOB_ERROR, "Invalid cmd: "SV_Fmt, SV_Arg(leftCmd));
+    CmdHistoryEntry ch = CreateCmdHistoryEntry(history->counter++, cmdText, "invalid cmd");
+    nob_da_append(history, ch);
+    return NULL;
+  }
+}
+
 int main(void) {
   InitWindow(SW, SH, "turtle");
 
@@ -378,8 +411,7 @@ int main(void) {
     .lines = lines
   };
 
-  Commands commands = {0};
-  size_t commandsCounter = 0;
+  CmdHistory cmdHistory = {0};
   TurtleCmd* tc = NULL;
 
   Nob_String_Builder inputText = {0};
@@ -403,54 +435,27 @@ int main(void) {
       int key = GetCharPressed();
 
       // Check if more characters have been pressed on the same frame
-      while (key > 0 && inputText.count < MAX_INPUT_CHARS_COUNT)
-      {
+      while (key > 0 && inputText.count < MAX_INPUT_CHARS_COUNT) {
           if ((key >= 32) && (key <= 125)) 
               nob_da_append(&inputText, (char)key);
 
           key = GetCharPressed();  // Check next character in the queue
       }
 
-      if (IsKeyPressed(KEY_BACKSPACE))
-      {
+      if (IsKeyPressed(KEY_BACKSPACE)) {
         inputText.count--;
       } 
       else if (IsKeyPressed(KEY_ENTER)) {
         Nob_String_View text = nob_sb_to_sv(inputText);
-        Nob_String_View leftCmd = nob_sv_chop_by_delim(&text, ' ');
-        tc = GetCmd(cmds, leftCmd);
-        if (tc) {
-          if (tc->argRequired) {
-            if (text.count == 0) {
-              nob_log(NOB_ERROR, "No argument provided: "SV_Fmt"???", SV_Arg(leftCmd));
-              CmdBuff cb = CreateCmdBuff(commandsCounter++, nob_sb_to_sv(inputText), "no arg");
-              nob_da_append(&commands, cb);
-              tc = NULL;
-            } else {
-              nob_log(NOB_INFO, SV_Fmt, SV_Arg(text));
-              CmdBuff cb = CreateCmdBuff(commandsCounter++, nob_sb_to_sv(inputText), "");
-              nob_da_append(&commands, cb);
-              tc->arg = text.data;
-            }
-          } else {
-            nob_log(NOB_INFO, SV_Fmt, SV_Arg(leftCmd));
-            CmdBuff cb = CreateCmdBuff(commandsCounter++, nob_sb_to_sv(inputText), "");
-            nob_da_append(&commands, cb);
-          }
-        } else {
-          nob_log(NOB_ERROR, "Invalid cmd: "SV_Fmt, SV_Arg(leftCmd));
-          CmdBuff cb = CreateCmdBuff(commandsCounter++, nob_sb_to_sv(inputText), "invalid cmd");
-          nob_da_append(&commands, cb);
-          tc = NULL;
-        }
+        tc = ParseCommandText(text, cmds, &cmdHistory);  
         inputText.count = 0;
       }
     }
 
     if (tc) {
       if (!UpdateTurtle(&turtle, tc, cmds)) {
-        CmdBuff cb = CreateCmdBuff(commandsCounter-1, nob_sv_from_cstr(tc->arg), "invalid arg");
-        nob_da_append(&commands, cb);
+        CmdHistoryEntry ch = CreateCmdHistoryEntry(cmdHistory.counter-1, nob_sv_from_cstr(tc->arg), "invalid arg");
+        nob_da_append(&cmdHistory, ch);
       }
       tc = NULL;
     }
@@ -469,11 +474,11 @@ int main(void) {
     DrawLine(5, INPUT_FONT_SIZE*1.3, 500, INPUT_FONT_SIZE*1.3, WHITE);
 
     size_t y = inputBoxPos.y + INPUT_FONT_SIZE*1.5;
-    for (int i = commands.count-1; i >= 0; i--) {
-      CmdBuff cb = commands.items[i];
+    for (int i = cmdHistory.count-1; i >= 0; i--) {
+      CmdHistoryEntry ch = cmdHistory.items[i];
       Vector2 pos = { .x = 10, .y = y };
-      char* _text = (char*)nob_temp_sv_to_cstr(cb.text);
-      DrawTextEx(spaceInputFontSize, _text, pos, INPUT_FONT_SIZE*0.6, 1, cb.color);
+      char* _text = (char*)nob_temp_sv_to_cstr(ch.text);
+      DrawTextEx(spaceInputFontSize, _text, pos, INPUT_FONT_SIZE*0.6, 1, ch.color);
       y += INPUT_FONT_SIZE*0.6;
       if (y >= SH) break;
     }
